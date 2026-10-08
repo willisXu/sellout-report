@@ -237,12 +237,16 @@ def main():
     fso = read_sellout(args.sellout)
     items, item_origin = load_items(pack, nsdir)
     channels = {txt(r["通路別"]): r for r in read_table(pack, "D_Channel")}
-    # 通路類別調整（build/通路類別調整.csv）：覆蓋資料包 D_Channel 的通路類別，例 員購、企業團購 → 線上自營
+    # 通路調整（build/通路類別調整.csv）：覆蓋資料包 D_Channel 的通路名稱、通路類別（欄位留空＝不改）
+    # 例：員購、企業團購 → 通路名稱「員購/特賣」（合併顯示）、類別「線上自營」
     if (HERE / "通路類別調整.csv").exists():
         for r in read_csv(HERE / "通路類別調整.csv"):
-            ch, cat = txt(r["通路別"]), txt(r["通路類別"])
-            if ch in channels and cat:
-                channels[ch] = {**channels[ch], "通路類別": cat, "備註": txt(r.get("說明")) or channels[ch].get("備註")}
+            ch = txt(r.get("通路別"))
+            if ch not in channels:
+                continue
+            upd = {k: txt(r.get(k)) for k in ("通路名稱", "通路類別") if txt(r.get(k))}
+            if upd:
+                channels[ch] = {**channels[ch], **upd, "備註": txt(r.get("說明")) or channels[ch].get("備註")}
     ch_name = {k: txt(v["通路名稱"]) for k, v in channels.items()}
 
     fx_ns = explode(fso, load_bom(pack, nsdir, False), items)
