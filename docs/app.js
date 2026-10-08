@@ -862,11 +862,12 @@
     $("#chkSeriesOk").textContent = seriesOk.size ? `已確認系列無誤、不再提醒的品號 ${seriesOk.size} 個：${[...seriesOk].join("、")}（build/系列確認.csv）` : "";
     $("#chkNoDetail").innerHTML = `<thead><tr><th class="l">通路別</th><th class="l">備註</th></tr></thead><tbody>` +
       (D.noDetailChannels.map(([c, n]) => `<tr><td class="l">${esc(c)}</td><td class="l">${esc(n)}</td></tr>`).join("") || `<tr><td colspan="2" class="empty">沒有</td></tr>`) + "</tbody>";
-    // 通路調整：通路對照原值 → 調整後；通路別不在通路對照（沒有套用）標黃
+    // 通路調整：通路對照原值 → 調整後；通路別不在通路對照（沒有套用）、被同一通路別後面的列覆蓋的標黃
     const chg = (a, b) => (b && b !== a ? `${a || "（空白）"} → ${b}` : a || "");
     $("#chkAdj").innerHTML = `<thead><tr><th class="l">通路別</th><th class="l">通路名稱</th><th class="l">通路類別</th><th class="l">狀態</th><th class="l">說明</th></tr></thead><tbody>` +
-      (D.chAdjust.map(([c, n0, n1, k0, k1, note, ok]) => `<tr><td class="l">${esc(c)}</td>` + (ok
-        ? `<td class="l">${esc(chg(n0, n1))}</td><td class="l">${esc(chg(k0, k1))}</td><td class="l">${(n1 && n1 !== n0) || (k1 && k1 !== k0) ? "已套用" : "與通路對照相同"}</td>`
+      (D.chAdjust.map(([c, n0, n1, k0, k1, note, ok, ov]) => `<tr><td class="l">${esc(c)}</td>` + (ok
+        ? `<td class="l">${esc(chg(n0, n1))}</td><td class="l">${esc(chg(k0, k1))}</td>` + (ov ? `<td class="l hi">${esc(ov)}被後面的列覆蓋</td>`
+          : `<td class="l">${(n1 && n1 !== n0) || (k1 && k1 !== k0) ? "已套用" : "與通路對照相同"}</td>`)
         : `<td class="l">${esc(n1 || "")}</td><td class="l">${esc(k1 || "")}</td><td class="l hi">不在通路對照，沒有套用</td>`) +
         `<td class="l">${esc(note || "")}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">沒有</td></tr>`) + "</tbody>";
   }
@@ -937,10 +938,10 @@
         } else if (keys.includes("原系列名稱") && keys.includes("報表系列名稱")) {
           next.seriesMap = recs.map(r => [r["原系列名稱"].trim(), r["報表系列名稱"].trim()]).filter(r => r[0] && r[1]);
           log.push(`系列對照「${name}」：${next.seriesMap.length} 筆`);
-        } else if (SO.isChAdjust(keys)) {   // 要在通路對照之前判斷（兩者都有通路別、通路名稱）
-          if (!keys.includes("通路名稱") && !keys.includes("通路類別")) throw new Error(`${name}：通路調整要有「通路名稱」或「通路類別」欄`);
+        } else if (SO.isChAdjust(recs.header)) {   // 要在通路對照之前判斷（兩者都有通路別、通路名稱）；只有標題列＝清空調整表
+          if (!recs.header.includes("通路名稱") && !recs.header.includes("通路類別")) throw new Error(`${name}：通路調整要有「通路名稱」或「通路類別」欄`);
           next.chAdjust = recs.map(r => ["通路別", "通路名稱", "通路類別", "說明"].map(k => (r[k] || "").trim() || null)).filter(r => r[0]);
-          log.push(`通路調整「${name}」：${next.chAdjust.length} 筆（覆蓋通路名稱、通路類別，留空＝不改）`);
+          log.push(`通路調整「${name}」：${next.chAdjust.length ? `${next.chAdjust.length} 筆（覆蓋通路名稱、通路類別，留空＝不改）` : "0 筆（清空調整表）"}`);
         } else if (keys.includes("通路別") && keys.includes("通路名稱")) {
           next.channels = recs.map(r => ["通路別", "通路名稱", "通路類別", "地區", "備註"].map(k => (r[k] || "").trim() || null)).filter(r => r[0]);
           log.push(`通路對照「${name}」：${next.channels.length} 個通路別`);

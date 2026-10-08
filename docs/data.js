@@ -181,10 +181,11 @@ window.SO = (() => {
       // [通路別, 通路名稱, 通路類別, 地區, 通路對照原本的通路名稱（Redermx 分開判斷用，改名後照樣分開）]
       channels: chList.map(c => { const r = chRaw.get(c), a = chAdj.get(c);
         return [c, a?.[0] || r?.[1] || null, a?.[1] || r?.[2] || null, r?.[3] || null, r?.[1] || null]; }),
-      // 資料檢核用：[通路別, 原通路名稱, 調整通路名稱, 原通路類別, 調整通路類別, 說明, 通路對照有這個通路別]
+      // 資料檢核用：[通路別, 原通路名稱, 調整通路名稱, 原通路類別, 調整通路類別, 說明, 通路對照有這個通路別, 被後面的列覆蓋的欄位]
       chAdjust: (raw.chAdjust || []).filter(r => r[0]).map(([ch, name, cat, note]) => {
-        const r = chRaw.get(ch);
-        return [ch, r?.[1] ?? null, name || null, r?.[2] ?? null, cat || null, note || null, !!r];
+        const r = chRaw.get(ch), a = chAdj.get(ch);
+        const ov = [a && name && name !== a[0] && "通路名稱", a && cat && cat !== a[1] && "通路類別"].filter(Boolean).join("、");
+        return [ch, r?.[1] ?? null, name || null, r?.[2] ?? null, cat || null, note || null, !!r, ov || null];
       }),
       currencyIssues: [...issues].map(s => s.split("\u0001")).sort((a, b) => (a[1] + a[0]).localeCompare(b[1] + b[0])),
       noDetailChannels: raw.channels.filter(c => (c[4] || "").includes("沒有品項明細")).map(c => [c[0], c[4]]),
@@ -259,8 +260,10 @@ window.SO = (() => {
       } else f += ch;
     }
     if (f !== "" || row.length) { row.push(f); rows.push(row); }
-    const hdr = rows.shift() || [];
-    return rows.filter(r => r.some(v => v !== "")).map(r => Object.fromEntries(hdr.map((h, i) => [h.trim(), r[i] ?? ""])));
+    const hdr = (rows.shift() || []).map(h => h.trim());
+    const out = rows.filter(r => r.some(v => v !== "")).map(r => Object.fromEntries(hdr.map((h, i) => [h, r[i] ?? ""])));
+    out.header = hdr;   // 只有標題列、沒有資料時用來判斷檔案種類（通路調整：只有標題＝清空調整表）
+    return out;
   }
 
   // NS 匯出 D_Item.csv → items（品牌、促銷組規則同 Power Query 04）
