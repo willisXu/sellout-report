@@ -86,6 +86,21 @@ def read_csv(path):
         return list(csv.DictReader(f))
 
 
+def read_ch_adjust():
+    """通路調整（build/通路類別調整.csv）→ [[通路別, 通路名稱, 通路類別, 說明]]，欄位留空＝不改。
+    標題列不對（例：Excel 存檔後欄名被改掉）時直接停止，避免整份調整失效卻沒人發現。"""
+    f = HERE / "通路類別調整.csv"
+    if not f.exists():
+        return []
+    with open(f, encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.reader(fh))
+    hdr = [h.strip() for h in rows[0]] if rows else []
+    if "通路別" not in hdr or not {"通路名稱", "通路類別"} & set(hdr):
+        sys.exit(f"[錯誤] {f.name} 的標題列應為「通路別,通路名稱,通路類別,說明」，目前是「{','.join(hdr)}」")
+    recs = [dict(zip(hdr, r)) for r in rows[1:]]
+    return [[txt(r.get(k)) for k in ("通路別", "通路名稱", "通路類別", "說明")] for r in recs if txt(r.get("通路別"))]
+
+
 def load_items(pack, nsdir):
     """回傳 {品號: dict}；NS 匯出的 D_Item.csv 存在就用它，否則用資料包的 D_Item。"""
     items = {}
@@ -195,7 +210,7 @@ def check(fx, items, ch_name):
         if r["ym"] != "202601":
             continue
         p = round((items.get(r["item"]) or {}).get("price") or 0)   # 裸瓶用自己的售價（網站同口徑）
-        for k in (ch_name.get(r["ch"], r["ch"]), "全通路"):
+        for k in (ch_name.get(r["ch"]) or f"{r['ch']}（未對到通路）", "全通路"):   # 同網頁 prepare()
             a = agg[k]
             a[0] += r["qty"]; a[1] += r["amt"]; a[2] += r["qty"] * p
     return {k: (v[0], v[1], v[2], v[1] / v[2] if v[2] else None) for k, v in agg.items()}
@@ -237,17 +252,15 @@ def main():
     fso = read_sellout(args.sellout)
     items, item_origin = load_items(pack, nsdir)
     channels = {txt(r["通路別"]): r for r in read_table(pack, "D_Channel")}
-    # 通路調整（build/通路類別調整.csv）：覆蓋資料包 D_Channel 的通路名稱、通路類別（欄位留空＝不改）
-    # 例：員購、企業團購 → 通路名稱「員購/特賣」（合併顯示）、類別「線上自營」
-    if (HERE / "通路類別調整.csv").exists():
-        for r in read_csv(HERE / "通路類別調整.csv"):
-            ch = txt(r.get("通路別"))
-            if ch not in channels:
-                continue
-            upd = {k: txt(r.get(k)) for k in ("通路名稱", "通路類別") if txt(r.get(k))}
-            if upd:
-                channels[ch] = {**channels[ch], **upd, "備註": txt(r.get("說明")) or channels[ch].get("備註")}
     ch_name = {k: txt(v["通路名稱"]) for k, v in channels.items()}
+    # 通路調整（build/通路類別調整.csv）：原樣放進 data.enc（chAdjust），由網頁端 buildModel 套用，
+    # 網頁上傳新的通路對照時調整也會保留；channels 維持資料包原值（備註、地區不被覆蓋）。這裡只套用通路名稱給下方驗算
+    ch_adjust = read_ch_adjust()
+    for ch, name, _, _ in ch_adjust:
+        if ch not in channels:
+            print(f"[注意] 通路類別調整.csv 的通路別「{ch}」不在 D_Channel，沒有套用（請檢查是否打錯）")
+        elif name:
+            ch_name[ch] = name
 
     fx_ns = explode(fso, load_bom(pack, nsdir, False), items)
     fx_tmp = explode(fso, load_bom(pack, nsdir, True), items)
@@ -299,6 +312,7 @@ def main():
                 "extra": bom_rows([p[:4] for p in extra_bom_pairs()])},
         "channels": [[txt(r["通路別"]), txt(r["通路名稱"]), txt(r["通路類別"]), txt(r["地區"]), txt(r["備註"])]
                      for r in channels.values()],
+        "chAdjust": ch_adjust,
         "so": [[ym, ch, it, cur, round(v[0], 4), round(v[1], 4)] for (ym, ch, it, cur), v in sorted(so.items())],
         "seriesOk": [r["系列確認品號"].strip() for r in read_csv(HERE / "系列確認.csv") if r["系列確認品號"].strip()]
                     if (HERE / "系列確認.csv").exists() else [],

@@ -3,7 +3,8 @@
  *   items    [品號, 品名, 產品代碼, 前三碼, 前六碼, 系列, 劑型, 存貨型態, 品牌, 售價]
  *   bom      { ns: NS BOM, bu: 組合單推 BOM, fb: 代碼拆解暫用, extra: 補充 BOM（業務指定，兩種模式都用） }，
  *            每列 [組包品號, 成分品號, 用量, 分攤比例]
- *   channels [通路別, 通路名稱, 通路類別, 地區, 備註]
+ *   channels [通路別, 通路名稱, 通路類別, 地區, 備註]（資料包 D_Channel 原值）
+ *   chAdjust [通路別, 通路名稱, 通路類別, 說明]（通路調整，build/通路類別調整.csv：覆蓋通路名稱、通路類別，留空＝不改）
  *   so       [年月, 通路別, 品號, 幣別, 數量, 台幣金額]（未拆組明細，依前四欄彙總）
  *   seriesMap [原系列名稱, 報表系列名稱]（系列名稱統一）
  *   bareMap  [裸瓶品號, 正貨品號]（手動指定裸瓶對應的正貨；沒指定的自動對應）
@@ -168,9 +169,23 @@ window.SO = (() => {
     const foreign = new Set(raw.so.filter(r => r[3] && r[3] !== "NTD").map(r => r[1]));
     const issues = new Set(raw.so.filter(r => r[3] === "NTD" && foreign.has(r[1])).map(r => r[1] + "\u0001" + r[0]));
     const chRaw = new Map(raw.channels.map(c => [c[0], c]));
+    // 通路調整：只調整通路對照裡有的通路別，同一通路別多列時逐欄合併（後面的列優先）；地區、備註維持通路對照原值
+    const chAdj = new Map();
+    for (const [ch, name, cat] of raw.chAdjust || []) {
+      if (!chRaw.has(ch)) continue;
+      const p = chAdj.get(ch);
+      chAdj.set(ch, [name || p?.[0] || null, cat || p?.[1] || null]);
+    }
     return {
       generated: raw.generated, source: raw.source, yms, items, src: SRC, fso, fx,
-      channels: chList.map(c => { const r = chRaw.get(c); return [c, r?.[1] || null, r?.[2] || null, r?.[3] || null]; }),
+      // [通路別, 通路名稱, 通路類別, 地區, 通路對照原本的通路名稱（Redermx 分開判斷用，改名後照樣分開）]
+      channels: chList.map(c => { const r = chRaw.get(c), a = chAdj.get(c);
+        return [c, a?.[0] || r?.[1] || null, a?.[1] || r?.[2] || null, r?.[3] || null, r?.[1] || null]; }),
+      // 資料檢核用：[通路別, 原通路名稱, 調整通路名稱, 原通路類別, 調整通路類別, 說明, 通路對照有這個通路別]
+      chAdjust: (raw.chAdjust || []).filter(r => r[0]).map(([ch, name, cat, note]) => {
+        const r = chRaw.get(ch);
+        return [ch, r?.[1] ?? null, name || null, r?.[2] ?? null, cat || null, note || null, !!r];
+      }),
       currencyIssues: [...issues].map(s => s.split("\u0001")).sort((a, b) => (a[1] + a[0]).localeCompare(b[1] + b[0])),
       noDetailChannels: raw.channels.filter(c => (c[4] || "").includes("沒有品項明細")).map(c => [c[0], c[4]]),
       bare: { 1: bareRows(bareNs), 2: bareRows(bareTmp) },
@@ -209,12 +224,16 @@ window.SO = (() => {
     return { rows, years, emptyYears };
   }
 
-  // 通路對照：第一張有「通路別、通路名稱」標題的工作表
+  // 通路調整表（通路別,通路名稱,通路類別,說明）也有「通路別、通路名稱」，用「說明」且沒有地區、備註來區分，
+  // 避免被當成整份通路對照（會把其他通路全部變成未對到通路）
+  const isChAdjust = hdr => hdr.includes("通路別") && hdr.includes("說明") && !hdr.includes("地區") && !hdr.includes("備註");
+
+  // 通路對照：第一張有「通路別、通路名稱」標題的工作表（通路調整表除外）
   function parseChannels(wb) {
     for (const name of wb.SheetNames) {
       const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
       const h = aoa.findIndex(r => r && r.includes("通路別") && r.includes("通路名稱"));
-      if (h < 0) continue;
+      if (h < 0 || isChAdjust(aoa[h].map(x => txt(x)))) continue;
       const hdr = aoa[h].map(x => txt(x));
       const g = (r, n) => (hdr.indexOf(n) >= 0 ? txt(r[hdr.indexOf(n)]) : null);
       return aoa.slice(h + 1).filter(r => g(r, "通路別"))
@@ -377,5 +396,5 @@ window.SO = (() => {
     XLSX.writeFile(wb, filename);
   }
 
-  return { SRC, buildModel, parseSellout, parseChannels, parseCsv, itemsFromCsv, bomFromCsv, encrypt, downloadXlsx };
+  return { SRC, buildModel, parseSellout, parseChannels, isChAdjust, parseCsv, itemsFromCsv, bomFromCsv, encrypt, downloadXlsx };
 })();

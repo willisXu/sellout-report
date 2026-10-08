@@ -130,6 +130,8 @@
         <p class="note">該通路其他月份用外幣、這個月填 NTD／匯率 1，且金額落在外幣的量級（與彙總表不符），疑似原幣直接當台幣。一直以台幣交易的經銷商通路不會列在這裡。請業務確認。</p></section>
       <section class="card"><div class="card-head"><h2>沒有品項明細的通路</h2></div><div class="tbl-wrap"><table class="tbl" id="chkNoDetail"></table></div>
         <p class="note">這些通路不在報表內。</p></section>
+      <section class="card"><div class="card-head"><h2>通路調整</h2></div><div class="tbl-wrap"><table class="tbl" id="chkAdj"></table></div>
+        <p class="note">build/通路類別調整.csv（或上傳的「通路別、通路名稱、通路類別、說明」CSV）覆蓋通路對照的通路名稱與通路類別，留空＝不改；地區、備註不變。黃底＝通路別不在通路對照，沒有套用，請檢查是否打錯。</p></section>
     </div>
     <section class="card"><div class="card-head"><h2>裸瓶對應正貨（拆組後）</h2></div>
       <div class="tbl-wrap"><table class="tbl" id="chkBare"></table></div>
@@ -163,6 +165,7 @@
         <ul class="small hint">
           <li><b>sell-out 明細</b>（必要）：業務每月的《yyyy年度 SellOut 明細表》.xlsx。檔案裡的年度會整年取代，其他年度保留（例：另外上傳含「2025年度」工作表的檔案就能補上 2025）</li>
           <li><b>通路對照</b>（選用）：明細出現新通路時，先「下載通路對照表」加一列再上傳</li>
+          <li><b>通路調整</b>（選用）：CSV「通路別、通路名稱、通路類別、說明」（同 build/通路類別調整.csv），覆蓋通路對照的通路名稱、通路類別，留空＝不改；上傳新的通路對照時調整照樣套用</li>
           <li><b>補充 BOM</b>（選用）：CSV「組包品號、成分品號、用量、分攤比例」，NS 沒有 BOM 但要拆的組包（兩種 BOM 模式都會用）</li>
           <li><b>裸瓶對照</b>（選用）：CSV 兩欄「裸瓶品號、正貨品號」，手動指定拆組後裸瓶要對應的正貨</li>
           <li><b>系列對照</b>（選用）：NS 系列改名時，下載系列對照表（原系列名稱 → 報表系列名稱）加一列再上傳</li>
@@ -179,7 +182,7 @@
         <li>開啟 <a href="https://github.com/willisXu/sellout-report/upload/main/docs" target="_blank" rel="noopener">GitHub 上傳頁（docs 資料夾）</a>，把 data.enc 拖進去，按「Commit changes」</li>
         <li>約 1 分鐘後網站更新，所有人重新整理就會看到新資料</li>
       </ol>
-      <p class="note">也可以在電腦上執行 07_網頁報表\更新報表資料.bat：它會用電腦上的原始資料（03_原始資料_業務提供、NS 匯出、build 資料夾的對照表）整份重建，<b>會取代</b>之前在這裡上傳發布的版本；網頁上傳時用的對照表（通路、系列、裸瓶、補充 BOM）如果要保留，請一併放到電腦上的對應檔案。</p>
+      <p class="note">也可以在電腦上執行 07_網頁報表\更新報表資料.bat：它會用電腦上的原始資料（03_原始資料_業務提供、NS 匯出、build 資料夾的對照表）整份重建，<b>會取代</b>之前在這裡上傳發布的版本；網頁上傳時用的對照表（通路、通路調整、系列、裸瓶、補充 BOM）如果要保留，請一併放到電腦上的對應檔案。</p>
     </section>
   </main>
 </div>
