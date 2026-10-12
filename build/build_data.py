@@ -291,12 +291,24 @@ def main():
     # 網頁上傳新的通路對照時調整也會保留；channels 維持資料包原值。這裡只套用通路名稱給下方驗算
     # D_Channel 沒有的通路別＝新增通路（例：歷史資料的加拿大、興奇yahoo），通路名稱留空＝用通路別
     ch_adjust = read_ch_adjust()
+    so_ch = {r["ch"] for r in fso}
     for ch, name, _, _, _ in ch_adjust:
         if ch not in channels:
-            print(f"通路調整新增通路：{ch}" + (f"（顯示為 {name}）" if name and name != ch else ""))
+            print(f"通路調整新增通路：{ch}" + (f"（顯示為 {name}）" if name and name != ch else "")
+                  + ("" if ch in so_ch else "  [注意] 明細沒有這個通路別，請檢查是否打錯"))
             ch_name[ch] = name or ch_name.get(ch) or ch
         elif name:
             ch_name[ch] = name
+    miss_ch = sorted(so_ch - ch_name.keys())
+    if miss_ch:
+        print(f"[注意] 明細有 {len(miss_ch)} 個通路別不在 D_Channel／通路調整（報表顯示「未對到通路」）：{'、'.join(miss_ch)}")
+
+    # 各年度筆數與金額：換明細檔或歷史檔後，對照上一次建置的輸出確認年度數字沒有跑掉
+    per_year = defaultdict(lambda: [0, 0.0])
+    for r in fso:
+        y = per_year[r["ym"][:4]]
+        y[0] += 1; y[1] += r["amt"]
+    print("各年度：" + "；".join(f"{y} {n:,} 列 {a:,.0f}" for y, (n, a) in sorted(per_year.items())))
 
     fx_ns = explode(fso, load_bom(pack, nsdir, False), items)
     fx_tmp = explode(fso, load_bom(pack, nsdir, True), items)
