@@ -262,14 +262,17 @@ def main():
     fso += hist
     items, item_origin = load_items(pack, nsdir)
     channels = {txt(r["通路別"]): r for r in read_table(pack, "D_Channel")}
-    # 通路調整（build/通路類別調整.csv）：覆蓋資料包 D_Channel 的通路名稱、通路類別（欄位留空＝不改）
+    # 通路調整（build/通路類別調整.csv）：覆蓋資料包 D_Channel 的通路名稱、通路類別、地區（欄位留空＝不改）
     # 例：員購、企業團購 → 通路名稱「員購/特賣」（合併顯示）、類別「線上自營」
+    # D_Channel 沒有的通路別（例：歷史資料的加拿大、興奇yahoo）在這裡新增；通路名稱留空＝用通路別
     if (HERE / "通路類別調整.csv").exists():
         for r in read_csv(HERE / "通路類別調整.csv"):
             ch = txt(r.get("通路別"))
-            if ch not in channels:
+            if not ch:
                 continue
-            upd = {k: txt(r.get(k)) for k in ("通路名稱", "通路類別") if txt(r.get(k))}
+            if ch not in channels:
+                channels[ch] = {"通路別": ch, "通路名稱": ch, "通路類別": None, "地區": None, "備註": None}
+            upd = {k: txt(r.get(k)) for k in ("通路名稱", "通路類別", "地區") if txt(r.get(k))}
             if upd:
                 channels[ch] = {**channels[ch], **upd, "備註": txt(r.get("說明")) or channels[ch].get("備註")}
     ch_name = {k: txt(v["通路名稱"]) for k, v in channels.items()}
