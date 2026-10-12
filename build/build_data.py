@@ -6,7 +6,9 @@ Sell-out 網頁報表：資料建置
 用法：
     python build/build_data.py                 # 密碼讀 build/password.txt（不進版控）或環境變數 SELLOUT_PASSWORD
     python build/build_data.py --check         # 只驗算，不輸出：印出 2026/01 各通路折扣率（網站口徑，兩種 BOM）
-路徑預設為上一層 SellOut報表 資料夾，可用 --sellout、--datapack、--nsdir 覆寫。
+路徑預設為上一層 SellOut報表 資料夾，可用 --sellout、--datapack、--nsdir、--history 覆寫。
+歷史年度：03_原始資料_業務提供/歷史資料 裡的明細檔（同樣是「yyyy年度」工作表）一併讀入；
+同一年度若主明細檔也有，以主明細檔為準（歷史檔的該年度略過）。
 """
 import argparse
 import base64
@@ -47,11 +49,11 @@ def num(v):
 
 
 # ---------------------------------------------------------------- 01 F_SO
-def read_sellout(path):
+def read_sellout(path, skip_years=()):
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     rows = []
     for name in wb.sheetnames:
-        if not re.fullmatch(r"\d{4}年度", name):
+        if not re.fullmatch(r"\d{4}年度", name) or name[:4] in skip_years:
             continue
         it = wb[name].iter_rows(values_only=True)
         next(it)  # 第 1 列小計
@@ -220,12 +222,33 @@ def latest_sellout():
     return max(cands, key=lambda f: f.stat().st_mtime)
 
 
+def read_history(folder, fso):
+    """歷史資料夾的明細檔：主明細檔已有的年度不讀（以主明細檔為準）。"""
+    folder = Path(folder)
+    if not folder.is_dir():
+        return [], []
+    have = {r["ym"][:4] for r in fso if r["ym"]}
+    rows, files = [], []
+    for f in sorted(folder.glob("*.xlsx")):
+        if f.name.startswith("~$"):
+            continue
+        got = read_sellout(f, skip_years=have)
+        if got:
+            years = sorted({r["ym"][:4] for r in got})
+            files.append(f"{f.name}（{years[0]}–{years[-1]}）")
+            print(f"歷史明細：{f.name}，{'、'.join(years)} 年度共 {len(got)} 列")
+        rows += got
+    return rows, files
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sellout", default=None, help="sell-out 明細檔；預設取 03_原始資料_業務提供 裡最新的一個")
     ap.add_argument("--datapack", default=str(ROOT / "05_資料包" / "SellOut報表資料包_NS對照與拆組_20261007.xlsx"))
     ap.add_argument("--nsdir", default=str(ROOT / "05_資料包" / "NS匯出"))
     ap.add_argument("--out", default=str(WEB / "docs" / "data.enc"))
+    ap.add_argument("--history", default=str(ROOT / "03_原始資料_業務提供" / "歷史資料"),
+                    help="歷史年度明細資料夾；主明細檔已有的年度不讀")
     ap.add_argument("--check", action="store_true", help="只驗算，不輸出")
     args = ap.parse_args()
     if not args.sellout:
@@ -235,6 +258,8 @@ def main():
     nsdir = Path(args.nsdir) if Path(args.nsdir).is_dir() else None
     pack = openpyxl.load_workbook(args.datapack, read_only=True, data_only=True)
     fso = read_sellout(args.sellout)
+    hist, hist_files = read_history(args.history, fso)
+    fso += hist
     items, item_origin = load_items(pack, nsdir)
     channels = {txt(r["通路別"]): r for r in read_table(pack, "D_Channel")}
     # 通路調整（build/通路類別調整.csv）：覆蓋資料包 D_Channel 的通路名稱、通路類別（欄位留空＝不改）
@@ -289,7 +314,7 @@ def main():
     data = {
         "v": 2,
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "source": {"sellout": Path(args.sellout).name, "datapack": Path(args.datapack).name, "item": item_origin},
+        "source": {"sellout": " ＋ ".join([Path(args.sellout).name, *hist_files]), "datapack": Path(args.datapack).name, "item": item_origin},
         "itemCols": ["品號", "品名", "產品代碼", "前三碼", "前六碼", "系列", "劑型", "存貨型態", "品牌", "售價", "非作用中"],
         "items": [[c, d["name"], d["spec"], d["p3"], d["p6"], d["series"], d["dosage"], d["inv"], d["brand"],
                    round(d["price"]) if d["price"] is not None else None,
