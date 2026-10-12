@@ -88,6 +88,21 @@ def read_csv(path):
         return list(csv.DictReader(f))
 
 
+def read_ch_adjust():
+    """通路調整（build/通路類別調整.csv）→ [[通路別, 通路名稱, 通路類別, 地區, 說明]]，欄位留空＝不改。
+    標題列不對（例：Excel 存檔後欄名被改掉）時直接停止，避免整份調整失效卻沒人發現。"""
+    f = HERE / "通路類別調整.csv"
+    if not f.exists():
+        return []
+    with open(f, encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.reader(fh))
+    hdr = [h.strip() for h in rows[0]] if rows else []
+    if "通路別" not in hdr or not {"通路名稱", "通路類別"} & set(hdr):
+        sys.exit(f"[錯誤] {f.name} 的標題列應為「通路別,通路名稱,通路類別,地區,說明」，目前是「{','.join(hdr)}」")
+    recs = [dict(zip(hdr, r)) for r in rows[1:]]
+    return [[txt(r.get(k)) for k in ("通路別", "通路名稱", "通路類別", "地區", "說明")] for r in recs if txt(r.get("通路別"))]
+
+
 def load_items(pack, nsdir):
     """回傳 {品號: dict}；NS 匯出的 D_Item.csv 存在就用它，否則用資料包的 D_Item。"""
     items = {}
@@ -197,7 +212,7 @@ def check(fx, items, ch_name):
         if r["ym"] != "202601":
             continue
         p = round((items.get(r["item"]) or {}).get("price") or 0)   # 裸瓶用自己的售價（網站同口徑）
-        for k in (ch_name.get(r["ch"], r["ch"]), "全通路"):
+        for k in (ch_name.get(r["ch"]) or f"{r['ch']}（未對到通路）", "全通路"):   # 同網頁 prepare()
             a = agg[k]
             a[0] += r["qty"]; a[1] += r["amt"]; a[2] += r["qty"] * p
     return {k: (v[0], v[1], v[2], v[1] / v[2] if v[2] else None) for k, v in agg.items()}
@@ -228,17 +243,26 @@ def read_history(folder, fso):
     if not folder.is_dir():
         return [], []
     have = {r["ym"][:4] for r in fso if r["ym"]}
-    rows, files = [], []
+    rows, files, seen = [], [], {}
     for f in sorted(folder.glob("*.xlsx")):
         if f.name.startswith("~$"):
             continue
-        got = read_sellout(f, skip_years=have)
+        got = read_sellout(f, skip_years=have | set(seen))
+        dup = sorted(y for y in sheet_years(f) if y in seen)
+        if dup:
+            print(f"[注意] 歷史明細 {f.name} 的 {'、'.join(dup)} 年度已由 {seen[dup[0]]} 提供，略過（同一年度只讀一個檔，避免重複加總）")
         if got:
             years = sorted({r["ym"][:4] for r in got})
+            seen.update({y: f.name for y in years})
             files.append(f"{f.name}（{years[0]}–{years[-1]}）")
             print(f"歷史明細：{f.name}，{'、'.join(years)} 年度共 {len(got)} 列")
         rows += got
     return rows, files
+
+
+def sheet_years(path):
+    wb = openpyxl.load_workbook(path, read_only=True)
+    return [n[:4] for n in wb.sheetnames if re.fullmatch(r"\d{4}年度", n)]
 
 
 def main():
@@ -262,20 +286,17 @@ def main():
     fso += hist
     items, item_origin = load_items(pack, nsdir)
     channels = {txt(r["通路別"]): r for r in read_table(pack, "D_Channel")}
-    # 通路調整（build/通路類別調整.csv）：覆蓋資料包 D_Channel 的通路名稱、通路類別、地區（欄位留空＝不改）
-    # 例：員購、企業團購 → 通路名稱「員購/特賣」（合併顯示）、類別「線上自營」
-    # D_Channel 沒有的通路別（例：歷史資料的加拿大、興奇yahoo）在這裡新增；通路名稱留空＝用通路別
-    if (HERE / "通路類別調整.csv").exists():
-        for r in read_csv(HERE / "通路類別調整.csv"):
-            ch = txt(r.get("通路別"))
-            if not ch:
-                continue
-            if ch not in channels:
-                channels[ch] = {"通路別": ch, "通路名稱": ch, "通路類別": None, "地區": None, "備註": None}
-            upd = {k: txt(r.get(k)) for k in ("通路名稱", "通路類別", "地區") if txt(r.get(k))}
-            if upd:
-                channels[ch] = {**channels[ch], **upd, "備註": txt(r.get("說明")) or channels[ch].get("備註")}
     ch_name = {k: txt(v["通路名稱"]) for k, v in channels.items()}
+    # 通路調整（build/通路類別調整.csv）：原樣放進 data.enc（chAdjust），由網頁端 buildModel 套用，
+    # 網頁上傳新的通路對照時調整也會保留；channels 維持資料包原值。這裡只套用通路名稱給下方驗算
+    # D_Channel 沒有的通路別＝新增通路（例：歷史資料的加拿大、興奇yahoo），通路名稱留空＝用通路別
+    ch_adjust = read_ch_adjust()
+    for ch, name, _, _, _ in ch_adjust:
+        if ch not in channels:
+            print(f"通路調整新增通路：{ch}" + (f"（顯示為 {name}）" if name and name != ch else ""))
+            ch_name[ch] = name or ch_name.get(ch) or ch
+        elif name:
+            ch_name[ch] = name
 
     fx_ns = explode(fso, load_bom(pack, nsdir, False), items)
     fx_tmp = explode(fso, load_bom(pack, nsdir, True), items)
@@ -327,6 +348,7 @@ def main():
                 "extra": bom_rows([p[:4] for p in extra_bom_pairs()])},
         "channels": [[txt(r["通路別"]), txt(r["通路名稱"]), txt(r["通路類別"]), txt(r["地區"]), txt(r["備註"])]
                      for r in channels.values()],
+        "chAdjust": ch_adjust,
         "so": [[ym, ch, it, cur, round(v[0], 4), round(v[1], 4)] for (ym, ch, it, cur), v in sorted(so.items())],
         "seriesOk": [r["系列確認品號"].strip() for r in read_csv(HERE / "系列確認.csv") if r["系列確認品號"].strip()]
                     if (HERE / "系列確認.csv").exists() else [],

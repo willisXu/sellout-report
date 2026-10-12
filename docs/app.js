@@ -45,6 +45,7 @@
   const NONE = "(無)";
   const RX = "-Redermx";
   // Redermx 分開顯示的通路（同業務《2026市場綜合折扣率》的拆法；其他通路的 Redermx 商品仍併在原通路）
+  // 依通路名稱判斷，通路調整改名後仍用通路對照原本的名稱比對（channels 第 5 欄）
   const RX_SPLIT = new Set(["官網", "BR4/A13", "英爵診所"]);
   // 未分類（系列 (未分類)、通路類別 未分類、代碼／劑型 (無)）一律排在最後；其餘維持原本的排序
   const isUncat = label => /^[（(]?(未分類|無)[)）]?$/.test(String(label ?? "").trim());
@@ -54,6 +55,7 @@
     d.chName = d.channels.map(c => c[1] || c[0] + "（未對到通路）");
     d.chCat = d.channels.map(c => c[2] || "未分類");
     d.chRegion = d.channels.map(c => c[3] || "");
+    d.chRx = d.channels.map((c, i) => RX_SPLIT.has(d.chName[i]) || RX_SPLIT.has(c[4]));
     d.price = d.items.map(it => it[I.PRICE] || 0);
     d.issue = new Set(d.currencyIssues.map(([c, ym]) => (d.chName[d.channels.findIndex(x => x[0] === c)] || c) + "|" + ym));
     d.years = [...new Set(d.yms.map(y => y.slice(0, 4)))];
@@ -233,7 +235,7 @@
       const qty = r[6], amt = r[7], price = D.price[r[2]], mkt = qty * price;
       const base = D.chName[r[1]];
       // Redermx 分開：同一通路的 Redermx 品牌商品另列一列（例 官網-Redermx），依商品品牌判斷（同業務參考檔）
-      const cn = S.r1.splitRx === "分開" && RX_SPLIT.has(base) && it[I.BRAND] === "Redermx" ? base + RX : base;
+      const cn = S.r1.splitRx === "分開" && D.chRx[r[1]] && it[I.BRAND] === "Redermx" ? base + RX : base;
       // 側表：不受通路篩選影響
       let s = side.get(cn);
       if (!s) side.set(cn, (s = [0, 0, 0, 0]));
@@ -625,6 +627,7 @@
         t("未對到品號", "#chkItems", r => (r ? NUM : null), [14, 50, 10, 14]),
         t("幣別不一致", "#chkCur", null, [12, 10]),
         t("沒有品項明細", "#chkNoDetail", null, [12, 40]),
+        t("通路調整", "#chkAdj", null, [12, 24, 28, 16, 28, 40]),
         t("裸瓶對應正貨", "#chkBare", (r, c) => (r && [2, 5, 6, 7].includes(c) ? NUM : null), [14, 36, 9, 14, 36, 9, 10, 12, 34]),
         t("系列歸類不一致", "#chkSeries", (r, c) => (r && c >= 2 ? NUM : null), [8, 16, 8, 14, 60]),
       ],
@@ -859,6 +862,17 @@
     $("#chkSeriesOk").textContent = seriesOk.size ? `已確認系列無誤、不再提醒的品號 ${seriesOk.size} 個：${[...seriesOk].join("、")}（build/系列確認.csv）` : "";
     $("#chkNoDetail").innerHTML = `<thead><tr><th class="l">通路別</th><th class="l">備註</th></tr></thead><tbody>` +
       (D.noDetailChannels.map(([c, n]) => `<tr><td class="l">${esc(c)}</td><td class="l">${esc(n)}</td></tr>`).join("") || `<tr><td colspan="2" class="empty">沒有</td></tr>`) + "</tbody>";
+    // 通路調整：通路對照原值 → 調整後；通路對照沒有的＝新增通路。明細沒有這個通路別（可能打錯）、被同一通路別後面的列覆蓋的標黃
+    const chg = (a, b) => (b && b !== a ? `${a || "（空白）"} → ${b}` : a || "");
+    $("#chkAdj").innerHTML = `<thead><tr><th class="l">通路別</th><th class="l">通路名稱</th><th class="l">通路類別</th><th class="l">地區</th><th class="l">狀態</th><th class="l">說明</th></tr></thead><tbody>` +
+      (D.chAdjust.map(([c, n0, n1, k0, k1, note, ok, ov, g0, g1, used]) => {
+        const st = ov ? [`${ov}被後面的列覆蓋`, true]
+          : !ok && !used ? ["新增通路，但明細沒有這個通路別（請檢查是否打錯）", true]
+          : !ok ? ["新增通路", false]
+          : [(n1 && n1 !== n0) || (k1 && k1 !== k0) || (g1 && g1 !== g0) ? "已套用" : "與通路對照相同", false];
+        return `<tr><td class="l">${esc(c)}</td><td class="l">${esc(ok ? chg(n0, n1) : n1 || c)}</td><td class="l">${esc(chg(k0, k1))}</td>` +
+          `<td class="l">${esc(chg(g0, g1))}</td><td class="l${st[1] ? " hi" : ""}">${esc(st[0])}</td><td class="l">${esc(note || "")}</td></tr>`;
+      }).join("") || `<tr><td colspan="6" class="empty">沒有</td></tr>`) + "</tbody>";
   }
 
   // ------------------------------------------------------------ 資料更新（上傳）
@@ -874,7 +888,7 @@
       <tr><td class="l">項目主檔</td><td class="l">${esc(RAW.source.item)}・${fmtN(RAW.items.length)} 個品號</td></tr>
       <tr><td class="l">組包 BOM</td><td class="l">NS ${fmtN(new Set(RAW.bom.ns.map(r => r[0])).size)} 個組包・組合單 ${fmtN(new Set(RAW.bom.bu.map(r => r[0])).size)}・暫用 ${fmtN(new Set(RAW.bom.fb.map(r => r[0])).size)}</td></tr>
       <tr><td class="l">系列對照</td><td class="l">${fmtN((RAW.seriesMap || []).length)} 筆（名稱統一，去掉「系列」）</td></tr>
-      <tr><td class="l">通路對照</td><td class="l">${fmtN(RAW.channels.length)} 個通路別</td></tr>
+      <tr><td class="l">通路對照</td><td class="l">${fmtN(RAW.channels.length)} 個通路別・通路調整 ${fmtN((RAW.chAdjust || []).length)} 筆</td></tr>
       <tr><td class="l">期間</td><td class="l">${ymLabel(D.yms[0])}–${ymLabel(D.yms[D.yms.length - 1])}（${[...byYear].map(([y, a]) => `${y} 年 ${fmtN(a)} 元`).join("、")}）</td></tr>
     </tbody></table>`;
     $("#updReset").hidden = !RAW._local;
@@ -927,6 +941,10 @@
         } else if (keys.includes("原系列名稱") && keys.includes("報表系列名稱")) {
           next.seriesMap = recs.map(r => [r["原系列名稱"].trim(), r["報表系列名稱"].trim()]).filter(r => r[0] && r[1]);
           log.push(`系列對照「${name}」：${next.seriesMap.length} 筆`);
+        } else if (SO.isChAdjust(recs.header)) {   // 要在通路對照之前判斷（兩者都有通路別、通路名稱）；只有標題列＝清空調整表
+          if (!recs.header.includes("通路名稱") && !recs.header.includes("通路類別")) throw new Error(`${name}：通路調整要有「通路名稱」或「通路類別」欄`);
+          next.chAdjust = recs.map(r => ["通路別", "通路名稱", "通路類別", "地區", "說明"].map(k => (r[k] || "").trim() || null)).filter(r => r[0]);
+          log.push(`通路調整「${name}」：${next.chAdjust.length ? `${next.chAdjust.length} 筆（覆蓋通路名稱、通路類別、地區，留空＝不改；通路對照沒有的通路別＝新增）` : "0 筆（清空調整表）"}`);
         } else if (keys.includes("通路別") && keys.includes("通路名稱")) {
           next.channels = recs.map(r => ["通路別", "通路名稱", "通路類別", "地區", "備註"].map(k => (r[k] || "").trim() || null)).filter(r => r[0]);
           log.push(`通路對照「${name}」：${next.channels.length} 個通路別`);
@@ -962,7 +980,7 @@
       const x = model.fx.filter(r => r[5] & 2).reduce((s, r) => s + r[7], 0);
       const before = sumBy(RAW.so, r => r[0]), after = sumBy(next.so, r => r[0]);
       const yms = [...new Set([...before.keys(), ...after.keys()])].sort();
-      const chKnown = new Set(next.channels.map(c => c[0]));
+      const chKnown = new Set([...next.channels, ...(next.chAdjust || [])].map(c => c[0]));   // 通路調整新增的通路也算對得到
       const newCh = sumBy(next.so.filter(r => !chKnown.has(r[1])), r => r[1]);
       const itemKnown = new Set(next.items.map(i => i[0]));
       const noItem = next.so.filter(r => !itemKnown.has(r[2]));
@@ -970,6 +988,8 @@
       if (Math.abs(so - x) > 1) warn.push(`拆組前後金額差 ${fmtN(x - so)}，請檢查 BOM`);
       if (newCh.size) warn.push(`明細有 ${newCh.size} 個通路別不在通路對照表：${[...newCh].map(([c, a]) => `${c}（${fmtN(a)} 元）`).join("、")}。報表會顯示「未對到通路」；請下載通路對照表補上後一起上傳`);
       if (noItem.length) warn.push(`${new Set(noItem.map(r => r[2])).size} 個品號在項目主檔找不到（${fmtN(noItem.reduce((s, r) => s + r[5], 0))} 元）`);
+      const adjMiss = [...new Set(model.chAdjust.filter(r => !r[6] && !r[10]).map(r => r[0]))];
+      if (adjMiss.length) warn.push(`通路調整有 ${adjMiss.length} 個通路別不在通路對照、明細也沒有：${adjMiss.join("、")}（請檢查是否打錯）`);
       if (model.currencyIssues.length) warn.push(`幣別與其他月份不一致：${model.currencyIssues.map(([c, y]) => `${c} ${ymLabel(y)}`).join("、")}`);
       box.innerHTML = `
         <h3>讀到的檔案</h3><ul>${log.map(l => `<li class="${l.startsWith("⚠") ? "err" : ""}">${esc(l)}</li>`).join("")}</ul>
