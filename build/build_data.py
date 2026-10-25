@@ -31,6 +31,7 @@ HERE = Path(__file__).resolve().parent
 WEB = HERE.parent
 ROOT = WEB.parent
 PBKDF2_ITER = 250_000
+BLANK_CH = "（空白）"   # 通路別空白的列（同網頁 parseSellout），報表顯示「（空白）（未對到通路）」
 
 
 def txt(v):
@@ -49,9 +50,11 @@ def num(v):
 
 
 # ---------------------------------------------------------------- 01 F_SO
-def read_sellout(path, skip_years=()):
+def read_sellout(path, skip_years=(), years=None):
+    """「yyyy年度」工作表的明細（第 1 列小計、第 2 列標題）。skip_years＝不讀的工作表年度；
+    years（set）收集有資料列的工作表年度——年度一律以工作表名稱為準，不看各列日期（同網頁 parseSellout）"""
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    rows = []
+    rows, bad = [], []
     for name in wb.sheetnames:
         if not re.fullmatch(r"\d{4}年度", name) or name[:4] in skip_years:
             continue
@@ -59,21 +62,39 @@ def read_sellout(path, skip_years=()):
         next(it)  # 第 1 列小計
         hdr = [txt(h) for h in next(it)]
         ix = {h: i for i, h in enumerate(hdr) if h}
+        before = len(rows)
         for r in it:
             item = txt(r[ix["DRWU品號"]])
             if not item:
                 if num(r[ix["台幣金額"]]):
                     print(f"[注意] 工作表「{name}」有品號空白但有金額的列：{r[ix['通路別']]} {r[ix['日期']]} 金額 {num(r[ix['台幣金額']]):,.0f}，已略過")
                 continue
+            ym = txt(r[ix["日期"]])
+            if not (ym and re.fullmatch(r"\d{6}", ym)):
+                bad.append(f"工作表「{name}」{ym} {txt(r[ix['通路別']])} {item}")
             rows.append({
-                "ym": txt(r[ix["日期"]]),
-                "ch": txt(r[ix["通路別"]]),
+                "ym": ym,
+                "ch": txt(r[ix["通路別"]]) or BLANK_CH,
                 "item": item,
                 "qty": num(r[ix["銷售數量"]]),
                 "amt": num(r[ix["台幣金額"]]),
                 "cur": txt(r[ix["幣別"]]) if "幣別" in ix else None,
             })
+        # 日期不在工作表年度的列（例：2026年度 補登 202512）照日期計入，但不影響讀哪個年度，提醒確認沒有重複
+        other = sorted({r["ym"][:4] for r in rows[before:] if r["ym"]} - {name[:4]})
+        if other:
+            n = sum(1 for r in rows[before:] if r["ym"] and r["ym"][:4] != name[:4])
+            print(f"[注意] {Path(path).name} 工作表「{name}」有 {n} 列日期在 {'、'.join(other)} 年，照日期計入（請確認沒有和其他檔重複）")
+        if years is not None and len(rows) > before:
+            years.add(name[:4])
+    if bad:   # 同網頁上傳：日期必須是 YYYYMM
+        sys.exit(f"[錯誤] {Path(path).name} 有 {len(bad)} 列「日期」不是 YYYYMM（例：{bad[0]}）")
     return rows
+
+
+def year_label(years):
+    ys = sorted(years)
+    return f"（{ys[0]}–{ys[-1]}）" if len(ys) > 1 else f"（{ys[0]}）" if ys else ""
 
 
 # ---------------------------------------------------------------- 維度表
@@ -237,25 +258,32 @@ def latest_sellout():
     return max(cands, key=lambda f: f.stat().st_mtime)
 
 
-def read_history(folder, fso):
-    """歷史資料夾的明細檔：主明細檔已有的年度不讀（以主明細檔為準）。"""
+def read_history(folder, main_years):
+    """歷史資料夾的明細檔：主明細檔有資料的年度不讀（以主明細檔為準），同一年度只讀檔名排序第一個檔。
+    年度以「yyyy年度」工作表為準（主明細檔某列日期是去年，不會讓去年的歷史資料整年被略過）。"""
     folder = Path(folder)
     if not folder.is_dir():
         return [], []
-    have = {r["ym"][:4] for r in fso if r["ym"]}
     rows, files, seen = [], [], {}
     for f in sorted(folder.glob("*.xlsx")):
         if f.name.startswith("~$"):
             continue
-        got = read_sellout(f, skip_years=have | set(seen))
-        dup = sorted(y for y in sheet_years(f) if y in seen)
-        if dup:
-            print(f"[注意] 歷史明細 {f.name} 的 {'、'.join(dup)} 年度已由 {seen[dup[0]]} 提供，略過（同一年度只讀一個檔，避免重複加總）")
-        if got:
-            years = sorted({r["ym"][:4] for r in got})
-            seen.update({y: f.name for y in years})
-            files.append(f"{f.name}（{years[0]}–{years[-1]}）")
-            print(f"歷史明細：{f.name}，{'、'.join(years)} 年度共 {len(got)} 列")
+        yrs = set()
+        got = read_sellout(f, skip_years=set(main_years) | set(seen), years=yrs)
+        sy = sheet_years(f)
+        mine = sorted(y for y in sy if y in main_years)
+        if mine:
+            print(f"歷史明細 {f.name} 的 {'、'.join(mine)} 年度主明細檔已有，略過（以主明細檔為準）")
+        by_src = defaultdict(list)
+        for y in sorted(y for y in sy if y in seen):
+            by_src[seen[y]].append(y)
+        if by_src:
+            print(f"[注意] 歷史明細 {f.name} 的 " + "；".join(f"{'、'.join(ys)} 年度已由 {src} 提供" for src, ys in by_src.items())
+                  + "，略過（同一年度只讀一個檔，避免重複加總）")
+        if yrs:
+            seen.update({y: f.name for y in yrs})
+            files.append(f.name + year_label(yrs))
+            print(f"歷史明細：{f.name}，{'、'.join(sorted(yrs))} 年度共 {len(got)} 列")
         rows += got
     return rows, files
 
@@ -281,8 +309,9 @@ def main():
 
     nsdir = Path(args.nsdir) if Path(args.nsdir).is_dir() else None
     pack = openpyxl.load_workbook(args.datapack, read_only=True, data_only=True)
-    fso = read_sellout(args.sellout)
-    hist, hist_files = read_history(args.history, fso)
+    main_years = set()
+    fso = read_sellout(args.sellout, years=main_years)
+    hist, hist_files = read_history(args.history, main_years)
     fso += hist
     items, item_origin = load_items(pack, nsdir)
     channels = {txt(r["通路別"]): r for r in read_table(pack, "D_Channel")}
@@ -350,7 +379,7 @@ def main():
     data = {
         "v": 2,
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "source": {"sellout": " ＋ ".join([Path(args.sellout).name, *hist_files]), "datapack": Path(args.datapack).name, "item": item_origin},
+        "source": {"sellout": " ＋ ".join([Path(args.sellout).name + year_label(main_years), *hist_files]), "datapack": Path(args.datapack).name, "item": item_origin},
         "itemCols": ["品號", "品名", "產品代碼", "前三碼", "前六碼", "系列", "劑型", "存貨型態", "品牌", "售價", "非作用中"],
         "items": [[c, d["name"], d["spec"], d["p3"], d["p6"], d["series"], d["dosage"], d["inv"], d["brand"],
                    round(d["price"]) if d["price"] is not None else None,

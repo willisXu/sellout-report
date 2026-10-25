@@ -221,7 +221,8 @@ window.SO = (() => {
       for (const r of aoa.slice(2)) {
         const item = txt(r[c("DRWU品號")]);
         if (!item) continue;
-        rows.push([txt(r[c("日期")]), txt(r[c("通路別")]), item, c("幣別") >= 0 ? txt(r[c("幣別")]) || "" : "",
+        // 通路別空白＝「（空白）」（同 build_data.py BLANK_CH），報表顯示「（空白）（未對到通路）」
+        rows.push([txt(r[c("日期")]), txt(r[c("通路別")]) || "（空白）", item, c("幣別") >= 0 ? txt(r[c("幣別")]) || "" : "",
           num(r[c("銷售數量")]), num(r[c("台幣金額")])]);
       }
       // 只有標題、沒有資料列的年度不算（避免上傳空白範本把整年清掉）

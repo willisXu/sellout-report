@@ -960,7 +960,18 @@
         if (v) { v[4] += r[4]; v[5] += r[5]; } else agg.set(k, [...r]);
       }
       next.so = next.so.filter(r => !soYears.has(r[0].slice(0, 4))).concat([...agg.values()]);
-      next.source.sellout = soFiles.join("、");
+      // 來源：這次上傳的檔案（標年度）＋ 原本來源裡還有年度沒被取代的檔（build_data.py 寫成「檔名（yyyy–yyyy）」，
+      // 例：上傳 2026 年明細後，2019–2025 的歷史檔仍列在來源）；沒標年度的視為已被取代
+      const fileYears = new Map(soFiles.map(f => [f, []]));
+      for (const [y, fs] of soYears) for (const f of fs) fileYears.get(f).push(y);
+      const yl = ys => { ys = [...new Set(ys)].sort(); return ys.length ? `（${ys[0]}${ys.length > 1 ? "–" + ys[ys.length - 1] : ""}）` : ""; };
+      const kept = (next.source.sellout || "").split(" ＋ ").filter(seg => {
+        const m = seg.match(/（(\d{4})(?:–(\d{4}))?）$/);
+        if (!m) return false;
+        for (let y = +m[1]; y <= +(m[2] || m[1]); y++) if (!soYears.has(String(y))) return true;
+        return false;
+      });
+      next.source.sellout = [...[...fileYears].map(([f, ys]) => f + yl(ys)), ...kept].join(" ＋ ");
       for (const [y, fs] of soYears) if (fs.length > 1)
         log.push(`⚠ ${y} 年度出現在 ${fs.length} 個檔案（${fs.join("、")}），已合併加總；如果是同一份資料的重複檔，請只上傳一個`);
     }
